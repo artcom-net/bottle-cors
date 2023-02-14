@@ -1,5 +1,6 @@
 import re
 import urllib.parse
+from http import HTTPStatus
 
 from bottlecors.http import HTTP_METHODS, HTTPMethod, HeaderValue
 from bottlecors.utils import is_container
@@ -16,11 +17,19 @@ class CORSConfig:
     _DEFAULT_ALLOWED_ORIGIN_REGEXES = ()
     _DEFAULT_EXPOSED_HEADERS = ()
     _DEFAULT_MAX_AGE = 0
+    _DEFAULT_WRAP_ERROR_STATUSES = (HTTPStatus.BAD_REQUEST,
+                                    HTTPStatus.UNAUTHORIZED,
+                                    HTTPStatus.FORBIDDEN,
+                                    HTTPStatus.NOT_FOUND,
+                                    HTTPStatus.METHOD_NOT_ALLOWED,
+                                    HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                                    HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE,
+                                    HTTPStatus.INTERNAL_SERVER_ERROR)
 
     __slots__ = ('allowed_origins', 'allowed_methods', 'allowed_headers',
                  'allowed_credentials', 'allowed_origin_regexes',
                  'exposed_headers', 'max_age', 'any_origins', 'any_methods',
-                 'any_headers', 'any_exposed_headers')
+                 'any_headers', 'any_exposed_headers', 'wrap_error_statuses')
 
     def __init__(self,
                  allowed_origins=_DEFAULT_ALLOWED_ORIGINS,
@@ -29,7 +38,8 @@ class CORSConfig:
                  allowed_credentials=_DEFAULT_ALLOWED_CREDENTIALS,
                  allowed_origin_regexes=_DEFAULT_ALLOWED_ORIGIN_REGEXES,
                  exposed_headers=_DEFAULT_EXPOSED_HEADERS,
-                 max_age=_DEFAULT_MAX_AGE):
+                 max_age=_DEFAULT_MAX_AGE,
+                 wrap_error_statuses=_DEFAULT_WRAP_ERROR_STATUSES):
         self.allowed_origins = self._parse_origins(allowed_origins)
         self.allowed_methods = self._parse_methods(allowed_methods)
         self.allowed_headers = self._parse_headers(allowed_headers)
@@ -45,6 +55,7 @@ class CORSConfig:
         self.any_methods = self._has_wildcard(self.allowed_methods)
         self.any_headers = self._has_wildcard(self.allowed_headers)
         self.any_exposed_headers = self._has_wildcard(self.exposed_headers)
+        self.wrap_error_statuses = wrap_error_statuses
 
     def _has_wildcard(self, values):
         return HeaderValue.WILDCARD in values

@@ -9,7 +9,8 @@ def parse_header_values(value):
 
 def make_header_value(values, transform=None):
     transform = transform if transform else lambda val: val
-    return ', '.join(transform(val) for val in values)
+    # return ', '.join(transform(val) for val in values)
+    return ', '.join(map(transform, values))
 
 
 def append_header(name, value, headers):

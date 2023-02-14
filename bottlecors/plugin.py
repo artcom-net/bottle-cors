@@ -6,20 +6,36 @@ from bottlecors.http import HTTPMethod, HTTPHeader, CORSHeader, HeaderValue, \
     parse_header_values, make_header_value, append_header
 
 
+# class HandleErrorPlugin:
+#     api = 2
+#     name = 'error_handling_plugin'
+#
+#     def apply(self, callback, route):
+#         def wrapper(*args, **kwargs):
+#             return callback(*args, **kwargs)
+#             try:
+#                 response = callback(*args, **kwargs)
+#             except Exception as error:
+#                 if not isinstance(error, bottle.HTTPError):
+#                     response = bottle.HTTPError(500, {'a': 1}, exception=error)
+#             return response
+#         return wrapper
+
+
 class CORSPlugin:
     api = 2
     name = 'cors_plugin'
+
+    _EXCLUDED_METHODS = frozenset(('PROXY', HTTPMethod.OPTIONS))
 
     def __init__(self, config):
         self._config = config
 
     def setup(self, app):
         routes = []
+        self._register_error_handlers(app)
         for route in app.routes:
-            if (
-                route.method == 'PROXY' or
-                route.method == HTTPMethod.OPTIONS
-            ):
+            if route.method in self._EXCLUDED_METHODS:
                 continue
             option_route = bottle.Route(app, route.rule, HTTPMethod.OPTIONS,
                                         lambda *a, **ka: bottle.HTTPResponse(
@@ -32,31 +48,49 @@ class CORSPlugin:
     def apply(self, callback, route):
 
         def wrapper(*args, **kwargs):
-            request_headers = bottle.request.headers
-            need_raise = False
             if self._is_preflight_request(bottle.request):
-                headers = self._get_preflight_response_headers(request_headers)
-                response = bottle.HTTPResponse(status=HTTPStatus.NO_CONTENT)
-            else:
-                headers = self._get_actual_response_headers(request_headers)
-                try:
-                    response = callback(*args, **kwargs)
-                except Exception as error:
-                    need_raise = True
-                    response = error
-            # headers[HTTPHeader.VARY] = HTTPHeader.ORIGIN.value
-                if not isinstance(response, bottle.HTTPResponse):
-                    response = bottle.response
-            append_header(HTTPHeader.VARY, HTTPHeader.ORIGIN, response.headers)
-            if isinstance(response, bottle.HTTPResponse):
-                response.headers.update(headers)
-                return response
-            bottle.response.headers.update(headers)
-            if need_raise:
-                raise
-            return response
-
+                return self._handle_preflight_request(bottle.request.headers)
+            return self._handle_actual_request(bottle.request.headers,
+                                               callback, args, kwargs)
         return wrapper
+
+    def _wrap_error_handler(self, handler):
+        def handle_error(response):
+            if CORSHeader.ALLOW_ORIGIN not in response:
+                headers = self._get_actual_response_headers(bottle.
+                                                            request.headers)
+                response.headers.update(headers)
+            return handler(response)
+        return handle_error
+
+    def _register_error_handlers(self, app):
+        for status in self._config.wrap_error_statuses:
+            app.error_handler[status] = self._wrap_error_handler(
+                app.error_handler.get(status, app.default_error_handler)
+            )
+
+    def _handle_preflight_request(self, request_headers):
+        headers = self._get_preflight_response_headers(request_headers)
+        return bottle.HTTPResponse(status=HTTPStatus.NO_CONTENT,
+                                   headers=headers)
+
+    def _handle_actual_request(self, request_headers, callback, args, kwargs):
+        body = None
+        error = None
+        headers = self._get_actual_response_headers(request_headers)
+        try:
+            response = callback(*args, **kwargs)
+        except bottle.HTTPError as http_error:
+            error = http_error
+            response = http_error
+        else:
+            if not isinstance(response, bottle.HTTPResponse):
+                body = response
+                response = bottle.response
+        response.headers.update(headers)
+        if error:
+            raise error
+        return body or response
 
     def _get_actual_response_headers(self, request_headers):
         headers = self._get_common_headers(request_headers)
@@ -102,7 +136,7 @@ class CORSPlugin:
         return headers
 
     def _get_common_headers(self, request_headers):
-        headers = {}
+        headers = {HTTPHeader.VARY: HTTPHeader.ORIGIN.value}
         origin = request_headers.get(HTTPHeader.ORIGIN)
         if not origin or not self._is_allowed_origin(origin):
             return headers
